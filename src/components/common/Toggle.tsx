@@ -1,0 +1,1 @@
+export function Toggle({ value, onChange, label }: { value: boolean; onChange: (value: boolean) => void; label: string }) { return <label className="toggle-row"><span>{label}</span><button className={`toggle ${value ? 'on' : ''}`} aria-pressed={value} onClick={() => onChange(!value)}><i /></button></label> }

@@ -1,0 +1,1 @@
+export function Tooltip({ children, text }: { children: React.ReactNode; text: string }) { return <span className="tooltip-wrap" tabIndex={0}>{children}<span className="tooltip-content" role="tooltip">{text}</span></span> }
