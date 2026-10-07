@@ -28,6 +28,6 @@ export function DashboardPage() {
       <div className="dashboard-grid evidence-grid"><div className="overview-card"><CameraFeed /></div><div className="overview-card"><ShelfSensors compact /></div><div className="overview-card"><VirtualCart /></div></div>
       <div className="overview-card timeline-card"><SectionHeading label="Live event stream" detail={`${events.length} immutable events`} action={<button className="text-button" onClick={() => navigate('/events')}>Open ledger <ArrowRight size={13} /></button>} /><EventTimeline compact limit={7} /></div><SimulationControls />
     </>}
-    <div className="dashboard-footnote"><ShieldCheck size={14} /><span>Neutral language by design: SentinelCart highlights unresolved evidence and verification paths; it does not label customers or infer intent.</span></div>
+    <div className="dashboard-footnote"><ShieldCheck size={14} /><span>Neutral language by design: ShopOnGo highlights unresolved evidence and verification paths; it does not label customers or infer intent.</span></div>
   </div>
 }

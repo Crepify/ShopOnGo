@@ -112,8 +112,8 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
     const complete = nextStep >= state.scenario.steps.length
     set({ elapsedMs, nextStep, events, result, session, currentAction: String(latest.payload.action ?? latest.type), status: complete ? 'COMPLETE' : state.status })
     if (complete) {
-      const history = JSON.parse(localStorage.getItem('sentinelcart-history') ?? '[]') as Array<{ scenarioId: string; outcome: string; at: number }>
-      localStorage.setItem('sentinelcart-history', JSON.stringify([{ scenarioId: state.scenario.id, outcome: result.overallStatus, at: Date.now() }, ...history].slice(0, 20)))
+      const history = JSON.parse(localStorage.getItem('shopongo-history') ?? localStorage.getItem('sentinelcart-history') ?? '[]') as Array<{ scenarioId: string; outcome: string; at: number }>
+      localStorage.setItem('shopongo-history', JSON.stringify([{ scenarioId: state.scenario.id, outcome: result.overallStatus, at: Date.now() }, ...history].slice(0, 20)))
     }
   },
   setSpeed: (speed) => set({ speed }),
@@ -128,6 +128,9 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
 }))
 
 export function clearLocalData() {
+  localStorage.removeItem('shopongo-history')
+  localStorage.removeItem('shopongo-settings')
+  // Legacy keys from before the ShopOnGo rename.
   localStorage.removeItem('sentinelcart-history')
   localStorage.removeItem('sentinelcart-settings')
 }

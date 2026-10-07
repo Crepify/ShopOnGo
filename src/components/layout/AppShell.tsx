@@ -26,7 +26,7 @@ export function AppShell() {
     <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
       <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter') navigate('/') }}>
         <div className="brand-mark"><ShieldCheck size={18} strokeWidth={2.5} /></div>
-        <div><div className="brand-name">Sentinel<span>Cart</span></div><div className="brand-sub">Retail intelligence lab</div></div>
+        <div><div className="brand-name">Shop<span>OnGo</span></div><div className="brand-sub">Retail intelligence lab</div></div>
       </div>
       <div className="side-section-label">Workspace</div>
       <nav className="side-nav" aria-label="Primary navigation">
@@ -43,7 +43,7 @@ export function AppShell() {
     {mobileOpen && <div className="mobile-backdrop" onClick={() => setMobileOpen(false)} />}
     <main className="main-shell">
       <header className="topbar">
-        <div className="topbar-left"><button className="mobile-menu icon-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu size={18} /></button><div className="breadcrumb"><span>SentinelCart</span><ChevronRight size={14} /><strong>{isActiveSimulation ? scenario.name : links.find((link) => location.pathname.startsWith(link.to))?.label ?? 'Overview'}</strong></div></div>
+        <div className="topbar-left"><button className="mobile-menu icon-button" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu size={18} /></button><div className="breadcrumb"><span>ShopOnGo</span><ChevronRight size={14} /><strong>{isActiveSimulation ? scenario.name : links.find((link) => location.pathname.startsWith(link.to))?.label ?? 'Overview'}</strong></div></div>
         <div className="topbar-actions"><div className="simulation-chip"><span className={`status-dot ${status === 'RUNNING' ? 'cyan pulse' : status === 'COMPLETE' ? 'green' : 'amber'}`} /> <span>{status === 'RUNNING' ? 'Live simulation' : status === 'COMPLETE' ? 'Run complete' : 'System ready'}</span></div><button className="avatar" aria-label="Operator account">OP</button></div>
       </header>
       {debugMode && <div className="debug-banner"><span><Gauge size={14} /> Developer mode enabled — raw evidence and operator triggers are visible.</span><button onClick={() => setSettings({ debugMode: false })}><X size={14} /></button></div>}

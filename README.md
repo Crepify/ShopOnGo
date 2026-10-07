@@ -1,6 +1,6 @@
-# SentinelCart
+# ShopOnGo
 
-SentinelCart is a frontend-only, deterministic simulation of intelligent scan-and-go verification. It keeps mobile declarations, simulated computer-vision observations, and simulated shelf evidence separate until a typed reconciliation engine produces a neutral, inspectable outcome.
+ShopOnGo is a frontend-only, deterministic simulation of intelligent scan-and-go verification. It keeps mobile declarations, simulated computer-vision observations, and simulated shelf evidence separate until a typed reconciliation engine produces a neutral, inspectable outcome.
 
 > This prototype does not claim to detect real theft, uses no facial recognition, and does not process real payments.
 
