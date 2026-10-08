@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { scenarios, scenarioById } from '../data/scenarios'
 import { reconcileEvents } from '../fusion/reconciliationEngine'
+import { createSession, hydrateEvent, nextExitState, scenarioDurationMs, severityFor } from '../simulation/replay'
 import type { ReconciliationResult, Scenario, SessionState, SimulationEvent } from '../types'
 
 export type SimulationStatus = 'IDLE' | 'RUNNING' | 'PAUSED' | 'COMPLETE' | 'STOPPED'
@@ -28,104 +29,105 @@ export interface SimulationState {
   appendOperatorEvent: (type: SimulationEvent['type'], payload?: Record<string, unknown>) => void
 }
 
-const sessionFor = (scenarioId: string): SessionState => ({ id: `session-${scenarioId}-${Date.now().toString(36)}`, customerId: 'person_01', startedAt: Date.now(), exitState: 'READY' })
 const initialScenario = scenarios[0]
-const severityFor = (event: SimulationEvent['type']): SimulationEvent['severity'] => ['PAYMENT_HELD', 'SKU_MISMATCH', 'QUANTITY_MISMATCH', 'SENSOR_UNAVAILABLE'].includes(event) ? 'ERROR' : ['ITEM_PROVISIONAL', 'ITEM_UNVERIFIED', 'CAMERA_UNCERTAIN', 'EXCEPTION_CREATED', 'TRACK_ASSOCIATION_UNCERTAIN', 'INVENTORY_MISMATCH'].includes(event) ? 'WARNING' : event === 'PAYMENT_APPROVED' || event === 'ITEM_CONFIRMED' ? 'SUCCESS' : 'INFO'
 
-function hydrateEvent(step: Scenario['steps'][number], scenario: Scenario, session: SessionState, index: number): SimulationEvent {
-  return {
-    id: `${session.id}-${index}-${step.id}`,
-    timestamp: session.startedAt + step.delayMs,
-    scenarioId: scenario.id,
-    sessionId: session.id,
-    customerId: step.customerId ?? session.customerId,
-    shelfId: step.shelfId,
-    productId: step.productId ?? (typeof step.payload?.productId === 'string' ? step.payload.productId : undefined),
-    source: step.source,
-    type: step.eventType,
-    confidence: step.confidence,
-    payload: { ...step.payload, action: step.action },
-    severity: step.severity ?? severityFor(step.eventType),
-    relatedObjectIds: [step.shelfId, step.productId, step.customerId ?? session.customerId].filter(Boolean) as string[],
+const idleRun = (scenario: Scenario) => ({
+  scenario,
+  status: 'IDLE' as SimulationStatus,
+  elapsedMs: 0,
+  nextStep: 0,
+  events: [] as SimulationEvent[],
+  session: createSession(scenario.id),
+  result: undefined as ReconciliationResult | undefined,
+  selectedEventId: undefined as string | undefined,
+  currentAction: 'Ready to start',
+})
+
+/**
+ * Advances the run to `targetMs` of scenario time and emits every step that falls
+ * inside the window. Speed is applied by the caller (tick) so that a single manual
+ * step always advances exactly one event, whatever the playback rate is.
+ */
+function makeAdvancer(get: () => SimulationState, set: (partial: Partial<SimulationState>) => void) {
+  return (targetMs: number) => {
+    const state = get()
+    const end = scenarioDurationMs(state.scenario)
+    const elapsedMs = Math.min(end, Math.max(state.elapsedMs, targetMs))
+    let nextStep = state.nextStep
+    const emitted: SimulationEvent[] = []
+    while (nextStep < state.scenario.steps.length && state.scenario.steps[nextStep].delayMs <= elapsedMs) {
+      emitted.push(hydrateEvent(state.scenario.steps[nextStep], state.scenario, state.session, nextStep))
+      nextStep += 1
+    }
+    const complete = nextStep >= state.scenario.steps.length
+    if (!emitted.length) {
+      if (elapsedMs === state.elapsedMs && !complete) return
+      return set({ elapsedMs, status: complete ? 'COMPLETE' : state.status })
+    }
+    const events = [...state.events, ...emitted]
+    const latest = emitted[emitted.length - 1]
+    const result = reconcileEvents(events, state.session.id)
+    const session = { ...state.session, exitState: emitted.reduce(nextExitState, state.session.exitState), reconciliation: result }
+    set({ elapsedMs, nextStep, events, result, session, currentAction: String(latest.payload.action ?? latest.type), status: complete ? 'COMPLETE' : state.status })
+    if (complete) recordRun(state.scenario.id, result.overallStatus)
   }
 }
 
-function nextExitState(current: SessionState['exitState'], event: SimulationEvent): SessionState['exitState'] {
-  if (event.type === 'EXIT_ATTEMPTED') return 'APPROACHING'
-  if (event.type === 'RECONCILIATION_STARTED') return 'RECONCILING'
-  if (event.type === 'PAYMENT_APPROVED') return 'APPROVED'
-  if (event.type === 'PAYMENT_HELD') return 'PAYMENT_HELD'
-  if (event.type === 'EXCEPTION_CREATED') return 'EXCEPTION_REQUIRED'
-  if (event.type === 'CAMERA_UNCERTAIN' || event.type === 'TRACK_ASSOCIATION_UNCERTAIN') return 'HUMAN_REVIEW'
-  if (event.type === 'SESSION_CLOSED') return 'CLOSED'
-  return current
+function recordRun(scenarioId: string, outcome: string) {
+  try {
+    const history = JSON.parse(localStorage.getItem('shopongo-history') ?? localStorage.getItem('sentinelcart-history') ?? '[]') as Array<{ scenarioId: string; outcome: string; at: number }>
+    localStorage.setItem('shopongo-history', JSON.stringify([{ scenarioId, outcome, at: Date.now() }, ...history].slice(0, 20)))
+  } catch { /* local storage is optional */ }
 }
 
-export const useSimulationStore = create<SimulationState>((set, get) => ({
-  scenario: initialScenario,
-  status: 'IDLE',
-  speed: 1,
-  elapsedMs: 0,
-  nextStep: 0,
-  events: [],
-  session: sessionFor(initialScenario.id),
-  currentAction: 'Ready to start',
-  launchScenario: (scenarioId) => {
-    const scenario = scenarioById[scenarioId] ?? initialScenario
-    const session = sessionFor(scenario.id)
-    set({ scenario, session, status: 'IDLE', elapsedMs: 0, nextStep: 0, events: [], result: undefined, selectedEventId: undefined, currentAction: 'Ready to start' })
-  },
-  start: () => set({ status: 'RUNNING' }),
-  pause: () => set({ status: 'PAUSED' }),
-  resume: () => set({ status: 'RUNNING' }),
-  stop: () => set({ status: 'STOPPED' }),
-  reset: () => {
-    const { scenario } = get()
-    const session = sessionFor(scenario.id)
-    set({ status: 'IDLE', session, elapsedMs: 0, nextStep: 0, events: [], result: undefined, selectedEventId: undefined, currentAction: 'Ready to start' })
-  },
-  step: () => {
-    const { scenario, nextStep } = get()
-    const stepData = scenario.steps[nextStep]
-    if (!stepData) return set({ status: 'COMPLETE' })
-    const target = Math.max(get().elapsedMs, stepData.delayMs)
-    set({ status: 'RUNNING' })
-    get().tick(target - get().elapsedMs)
-    if (get().status !== 'COMPLETE') set({ status: 'PAUSED' })
-  },
-  tick: (deltaMs) => {
-    const state = get()
-    if (state.status !== 'RUNNING') return
-    const elapsedMs = state.elapsedMs + deltaMs * state.speed
-    let nextStep = state.nextStep
-    const newlyEmitted: SimulationEvent[] = []
-    while (nextStep < state.scenario.steps.length && state.scenario.steps[nextStep].delayMs <= elapsedMs) {
-      const step = state.scenario.steps[nextStep]
-      newlyEmitted.push(hydrateEvent(step, state.scenario, state.session, nextStep))
-      nextStep += 1
-    }
-    if (!newlyEmitted.length) return set({ elapsedMs })
-    const events = [...state.events, ...newlyEmitted]
-    const latest = newlyEmitted[newlyEmitted.length - 1]
-    const result = reconcileEvents(events, state.session.id)
-    const session = { ...state.session, exitState: newlyEmitted.reduce(nextExitState, state.session.exitState), reconciliation: result }
-    const complete = nextStep >= state.scenario.steps.length
-    set({ elapsedMs, nextStep, events, result, session, currentAction: String(latest.payload.action ?? latest.type), status: complete ? 'COMPLETE' : state.status })
-    if (complete) {
-      const history = JSON.parse(localStorage.getItem('shopongo-history') ?? localStorage.getItem('sentinelcart-history') ?? '[]') as Array<{ scenarioId: string; outcome: string; at: number }>
-      localStorage.setItem('shopongo-history', JSON.stringify([{ scenarioId: state.scenario.id, outcome: result.overallStatus, at: Date.now() }, ...history].slice(0, 20)))
-    }
-  },
-  setSpeed: (speed) => set({ speed }),
-  selectEvent: (selectedEventId) => set({ selectedEventId }),
-  appendOperatorEvent: (type, payload = {}) => {
-    const state = get()
-    const event: SimulationEvent = { id: `operator-${Date.now()}`, timestamp: Date.now(), scenarioId: state.scenario.id, sessionId: state.session.id, customerId: state.session.customerId, shelfId: typeof payload.shelfId === 'string' ? payload.shelfId : undefined, productId: typeof payload.productId === 'string' ? payload.productId : undefined, source: type === 'ITEM_SCANNED' || type === 'ITEM_SCAN_DUPLICATED' ? 'MOBILE' : 'OPERATOR', type, payload, severity: severityFor(type), relatedObjectIds: [state.session.customerId, typeof payload.productId === 'string' ? payload.productId : undefined, typeof payload.shelfId === 'string' ? payload.shelfId : undefined].filter(Boolean) as string[] }
-    const events = [...state.events, event]
-    const result = reconcileEvents(events, state.session.id)
-    set({ events, result, session: { ...state.session, reconciliation: result }, currentAction: `Operator event: ${type}` })
-  },
-}))
+export const useSimulationStore = create<SimulationState>((set, get) => {
+  const advanceTo = makeAdvancer(get, set)
+  return {
+    ...idleRun(initialScenario),
+    speed: 1,
+    launchScenario: (scenarioId) => {
+      const scenario = scenarioById[scenarioId] ?? initialScenario
+      set({ ...idleRun(scenario), speed: get().speed })
+    },
+    // Starting a finished or stopped journey replays it from the beginning instead of
+    // leaving the runner spinning past the last event.
+    start: () => {
+      const { status, scenario } = get()
+      if (status === 'COMPLETE' || status === 'STOPPED') set({ ...idleRun(scenario), status: 'RUNNING', speed: get().speed })
+      else set({ status: 'RUNNING' })
+    },
+    pause: () => set({ status: 'PAUSED' }),
+    resume: () => set({ status: 'RUNNING' }),
+    // Stop halts playback but keeps the emitted evidence inspectable.
+    stop: () => set({ status: 'STOPPED' }),
+    reset: () => set((state) => ({ ...idleRun(state.scenario), speed: state.speed })),
+    step: () => {
+      const state = get()
+      if (state.status === 'RUNNING' || state.status === 'COMPLETE') return
+      const stepData = state.scenario.steps[state.nextStep]
+      if (!stepData) return set({ status: 'COMPLETE' })
+      set({ status: 'RUNNING' })
+      advanceTo(stepData.delayMs)
+      if (get().status !== 'COMPLETE') set({ status: 'PAUSED' })
+    },
+    tick: (deltaMs) => {
+      const state = get()
+      if (state.status !== 'RUNNING') return
+      advanceTo(state.elapsedMs + deltaMs * state.speed)
+    },
+    setSpeed: (speed) => set({ speed }),
+    selectEvent: (selectedEventId) => set({ selectedEventId }),
+    appendOperatorEvent: (type, payload = {}) => {
+      const state = get()
+      const shelfId = typeof payload.shelfId === 'string' ? payload.shelfId : undefined
+      const productId = typeof payload.productId === 'string' ? payload.productId : undefined
+      const event: SimulationEvent = { id: `operator-${Date.now()}`, timestamp: Date.now(), scenarioId: state.scenario.id, sessionId: state.session.id, customerId: state.session.customerId, shelfId, productId, source: type === 'ITEM_SCANNED' || type === 'ITEM_SCAN_DUPLICATED' ? 'MOBILE' : 'OPERATOR', type, payload, severity: severityFor(type), relatedObjectIds: [shelfId, productId, state.session.customerId].filter(Boolean) as string[] }
+      const events = [...state.events, event]
+      const result = reconcileEvents(events, state.session.id)
+      set({ events, result, session: { ...state.session, exitState: nextExitState(state.session.exitState, event), reconciliation: result }, currentAction: `Operator event: ${type}` })
+    },
+  }
+})
 
 export function clearLocalData() {
   localStorage.removeItem('shopongo-history')

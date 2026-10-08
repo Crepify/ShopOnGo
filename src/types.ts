@@ -57,6 +57,8 @@ export interface Product {
   color: string
   shelfId: string
   position: [number, number, number]
+  /** Y rotation so a product's long axis follows a rotated shelf (aisle 04). */
+  rotationY?: number
   dimensions: [number, number, number]
   image?: string
 }

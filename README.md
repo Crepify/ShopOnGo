@@ -55,7 +55,7 @@ No environment variables are required.
 12. Delayed / out-of-order events
 13. Duplicate scan
 
-Each journey is deterministic, replayable, and emits immutable timestamped events. The simulation controls support start, pause, resume, restart, stop, single-step, and 0.5x / 1x / 2x / 4x / 8x speed.
+Each journey declares its outcome as `"<item status> → <overall status>"` using the vocabulary the fusion engine produces, and `src/simulation/replay.test.ts` fails the build if a journey stops matching it. Duration and event counts are derived from the authored steps, so the scenario cards and in-app progress bars cannot drift from the actual timeline. Each journey is deterministic, replayable, and emits immutable timestamped events. The simulation controls support start, pause, resume, restart, stop, single-step, and 0.5x / 1x / 2x / 4x / 8x speed.
 
 ## Architecture
 
@@ -66,7 +66,10 @@ Each journey is deterministic, replayable, and emits immutable timestamped event
 - `src/fusion/reconciliationEngine.ts` — UI-independent evidence fusion rules.
 - `src/scene/StoreScene.tsx` — procedural low-poly React Three Fiber store, interactive shelves, products, customer, cameras, bag zone, and exit gate.
 - `src/components/` — responsive control-room UI, camera feed, shelf sensors, virtual cart, event timeline, controls, and report modal.
+- `src/simulation/replay.ts` — shared playback primitives, deterministic scenario replay, and the pass/fail rule used by the report and the export.
+- `src/simulation/shelfState.ts` — derives physical shelf weight/sensor state from the evidence stream (the boundary a hardware adapter would publish).
 - `src/simulation/validation.ts` — scenario validation helper.
+- `src/simulation/replay.test.ts`, `src/simulation/playback.test.ts` — library invariants and playback tests: every scenario must replay to its declared outcome and agree with the checkout events it emits.
 
 The browser never makes a payment decision from a visual component. The fusion engine derives an explicit `ReconciliationResult`; the UI only presents it.
 
@@ -74,11 +77,11 @@ The browser never makes a payment decision from a visual component. The fusion e
 
 Add a `Scenario` object to `src/data/scenarios.ts`:
 
-1. Give it an id, description, category, risk label, duration, and expected outcome.
+1. Give it an id, description, category, risk label, and an expected outcome of the form `ITEM_STATUS → OVERALL_STATUS` (duration and event count are derived).
 2. Add deterministic `ScenarioStep` objects in ascending `delayMs` order.
 3. Reference only ids in `src/data/products.ts` and `src/data/shelves.ts`.
 4. Use an existing typed `EventType` and `EventSource` where possible.
-5. Run `validateScenario` / `validateAllScenarios` and add a reconciliation test for any new rule.
+5. Run `validateScenario` / `validateAllScenarios` and `npm test`: the replay suite asserts that the engine reaches the declared outcome.
 6. The scenario selector, playback, event ledger, cart, 3D path, report, and analytics surfaces consume the same object automatically.
 
 ## Future OpenCV connection
