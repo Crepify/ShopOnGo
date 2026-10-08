@@ -4,7 +4,7 @@ import { useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { cameras } from '../data/cameras'
 import { productById, products } from '../data/products'
-import { shelves } from '../data/shelves'
+import { shelfById, shelves } from '../data/shelves'
 import { useSceneStore } from '../stores/sceneStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useSimulationStore } from '../stores/simulationStore'
@@ -48,11 +48,11 @@ function ShelfModel({ shelfId, name, position, rotation }: { shelfId: string; na
   </group>
 }
 
-function ProductModel({ productId, position, dimensions, color, held = false }: { productId: string; position: [number, number, number]; dimensions: [number, number, number]; color: string; held?: boolean }) {
+function ProductModel({ productId, position, rotationY = 0, dimensions, color, held = false }: { productId: string; position: [number, number, number]; rotationY?: number; dimensions: [number, number, number]; color: string; held?: boolean }) {
   const selected = useSceneStore((state) => state.selectedObject === productId)
   const setSelectedObject = useSceneStore((state) => state.setSelectedObject)
   const isCylinder = productId === 'milk' || productId === 'juice'
-  return <group visible={!held} position={position} onClick={(event) => { event.stopPropagation(); setSelectedObject(productId) }}>
+  return <group visible={!held} position={position} rotation={[0, rotationY, 0]} onClick={(event) => { event.stopPropagation(); setSelectedObject(productId) }}>
     <mesh castShadow><boxGeometry args={selected || isCylinder ? [dimensions[0] * 1.1, dimensions[1] * 1.1, dimensions[2] * 1.1] : dimensions} /><meshStandardMaterial color={selected ? '#82f5fb' : color} emissive={selected ? '#0ca4b0' : color} emissiveIntensity={selected ? 0.65 : 0.12} roughness={0.62} /></mesh>
     <mesh position={[0, 0, dimensions[2] / 2 + 0.009]}><planeGeometry args={[Math.min(dimensions[0] * 0.82, 0.5), Math.min(dimensions[1] * 0.35, 0.28)]} /><meshBasicMaterial color="#eaf6f7" transparent opacity={0.72} /></mesh>
     {selected && <Html position={[0, 0.66, 0]} center distanceFactor={9}><span className="scene-product-label">{productById[productId].name}</span></Html>}
@@ -66,9 +66,11 @@ function CustomerModel() {
   const scenario = useSimulationStore((state) => state.scenario)
   const selected = useSceneStore((state) => state.selectedObject === 'person_01')
   const setSelectedObject = useSceneStore((state) => state.setSelectedObject)
-  const focusProductId = scenario.steps.find((step) => step.eventType === 'CAMERA_PICK_DETECTED')?.productId ?? 'coffee'
-  const focusProduct = productById[focusProductId]
   const pickStep = scenario.steps.find((step) => step.eventType === 'CAMERA_PICK_DETECTED')
+  // A scan-only journey never picks anything, so the interacted shelf comes from the scan.
+  const focusProductId = pickStep?.productId ?? scenario.steps.find((step) => step.eventType === 'ITEM_SCANNED')?.productId ?? 'coffee'
+  const focusProduct = productById[focusProductId]
+  const focusShelf = shelfById[focusProduct.shelfId] ?? shelves[0]
   const scanStep = scenario.steps.find((step) => step.eventType === 'ITEM_SCANNED')
   const bagStep = scenario.steps.find((step) => step.eventType === 'ITEM_MOVED_TO_BAG')
   const returnStep = scenario.steps.find((step) => step.eventType === 'CAMERA_RETURN_DETECTED')
@@ -77,20 +79,32 @@ function CustomerModel() {
   const isReaching = reach > 0 && reach < 1
   const isHolding = Boolean(pickStep && elapsed >= pickStep.delayMs + 350 && (!returnStep || elapsed < returnStep.delayMs) && (!bagStep || elapsed < bagStep.delayMs))
   const isScanning = Boolean(scanStep && elapsed >= scanStep.delayMs - 450 && elapsed < scanStep.delayMs + 850)
-  const waypoints = useMemo(() => [[-7.2, 0.18, 3.3], [-4.7, 0.18, 1.25], [focusProduct?.position[0] ?? -4.8, 0.18, -0.9], [0.4, 0.18, 1.15], [4.2, 0.18, 1.4], [7, 0.18, 1.35]] as [number, number, number][], [focusProduct])
-  const position = useMemo(() => {
+  // Stand in front of the interacted shelf: its rotation decides which way the aisle is.
+  const standOff: [number, number, number] = [focusProduct.position[0] + Math.sin(focusShelf.rotation) * 1.2, 0.18, focusProduct.position[2] + Math.cos(focusShelf.rotation) * 1.2]
+  const waypoints = useMemo(() => [[-7.2, 0.18, 3.3], [-4.7, 0.18, 1.25], standOff, [0.4, 0.18, 1.15], [4.2, 0.18, 1.4], [7, 0.18, 1.35]] as [number, number, number][], [standOff[0], standOff[1], standOff[2]])
+  const target = useMemo(() => {
     const progress = Math.min(0.999, elapsed / 9000)
     const scaled = progress * (waypoints.length - 1)
     const index = Math.min(waypoints.length - 2, Math.floor(scaled))
     const local = scaled - index
     const eased = local * local * (3 - 2 * local)
     const a = waypoints[index] ?? waypoints[0]; const b = waypoints[index + 1] ?? a
-    return [a[0] + (b[0] - a[0]) * eased, a[1], a[2] + (b[2] - a[2]) * eased] as [number, number, number]
+    // heading so the model walks the way it faces (it looks down -z at rotation 0)
+    const heading = Math.atan2(-(b[0] - a[0]), -(b[2] - a[2]))
+    return { point: [a[0] + (b[0] - a[0]) * eased, a[1], a[2] + (b[2] - a[2]) * eased] as [number, number, number], heading }
   }, [elapsed, waypoints])
-  useFrame((_, delta) => { if (group.current) { group.current.position.y = position[1] + (status === 'RUNNING' ? Math.sin(elapsed / 150) * 0.025 : 0); group.current.rotation.y = THREE.MathUtils.lerp(group.current.rotation.y, position[0] > group.current.position.x ? 0 : Math.PI, Math.min(1, delta * 4)) } })
+  const heading = useRef(target.heading)
+  useFrame((_, delta) => {
+    if (!group.current) return
+    group.current.position.y = target.point[1] + (status === 'RUNNING' ? Math.sin(elapsed / 150) * 0.025 : 0)
+    // shortest-path turn towards the walking direction
+    const turn = ((target.heading - heading.current + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI
+    heading.current += turn * Math.min(1, delta * 4)
+    group.current.rotation.y = heading.current
+  })
   const leftArmPosition: [number, number, number] = [-0.18, 0.72 + reach * 0.2, -reach * 0.24]
   const rightArmPosition: [number, number, number] = [0.18, 0.72 + reach * 0.2, -reach * 0.24]
-  return <group ref={group} position={position} onClick={(event) => { event.stopPropagation(); setSelectedObject('person_01') }}>
+  return <group ref={group} position={target.point} onClick={(event) => { event.stopPropagation(); setSelectedObject('person_01') }}>
     <mesh castShadow position={[0, 0.75, 0]}><capsuleGeometry args={[0.27, 0.58, 4, 8]} /><meshStandardMaterial color={selected ? '#70f2f1' : '#5477aa'} emissive={selected ? '#0c737d' : '#142d58'} emissiveIntensity={selected ? 0.7 : 0.3} /></mesh>
     <mesh castShadow position={[0, 1.55, 0]} rotation={[0, isReaching ? -0.18 : 0, 0]}><sphereGeometry args={[0.3, 12, 8]} /><meshStandardMaterial color="#e4b59b" /></mesh>
     <mesh castShadow position={[0, 0.25, -0.13]} rotation={[-0.25, 0, 0]}><boxGeometry args={[0.5, 0.35, 0.18]} /><meshStandardMaterial color="#d0a65c" /></mesh>
@@ -146,7 +160,7 @@ function SceneContent() {
     <pointLight position={[5, 3, 2]} intensity={18} distance={10} color="#229eb6" />
     <Floor />
     {shelves.map((shelf) => <ShelfModel key={shelf.id} shelfId={shelf.id} name={shelf.name} position={shelf.position} rotation={shelf.rotation} />)}
-    {products.map((product) => <ProductModel key={product.id} productId={product.id} position={product.position} dimensions={product.dimensions} color={product.color} held={productRemoved && product.id === focusProductId} />)}
+    {products.map((product) => <ProductModel key={product.id} productId={product.id} position={product.position} rotationY={product.rotationY} dimensions={product.dimensions} color={product.color} held={productRemoved && product.id === focusProductId} />)}
     {cameras.map((camera) => <CameraModel key={camera.id} id={camera.id} name={camera.name} position={camera.position} />)}
     <ExitGate />
     <mesh position={[2.8, 0.08, 1.45]} onClick={(event) => { event.stopPropagation(); setSelectedObject('bag-zone') }}>
