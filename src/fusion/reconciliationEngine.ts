@@ -75,7 +75,7 @@ export function reconcileEvents(events: SimulationEvent[], sessionId: string): R
   const hasSensorFailure = events.some((event) => event.type === 'SENSOR_UNAVAILABLE' || event.type === 'AUTOMATIC_CHECKOUT_DISABLED')
   const hasCameraUncertainty = events.some((event) => event.type === 'CAMERA_UNCERTAIN' || event.type === 'TRACK_ASSOCIATION_UNCERTAIN')
   const hasSkuMismatch = events.some((event) => event.type === 'SKU_MISMATCH')
-  const hasQuantityMismatch = events.some((event) => event.type === 'QUANTITY_MISMATCH' || event.type === 'ITEM_SCAN_DUPLICATED')
+  const hasQuantityMismatch = events.some((event) => event.type === 'QUANTITY_MISMATCH' || event.type === 'ITEM_SCAN_DUPLICATED') || [...byProduct.values()].some((item) => item.scanned && item.observed && item.scannedQuantity !== item.observedQuantity)
   const hasWrongShelf = events.some((event) => event.type === 'INVENTORY_MISMATCH')
   const hasException = events.some((event) => event.type === 'EXCEPTION_CREATED')
   const hasReturn = events.some((event) => event.type === 'CAMERA_RETURN_DETECTED')

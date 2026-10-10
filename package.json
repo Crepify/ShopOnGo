@@ -16,7 +16,7 @@
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^7.1.1",
+    "react-router-dom": "^6.28.1",
     "recharts": "^2.15.0",
     "three": "^0.171.0",
     "zustand": "^5.0.3"
@@ -29,5 +29,8 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"
+  },
+  "overrides": {
+    "hls.js": "1.5.17"
   }
 }
